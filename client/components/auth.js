@@ -128,6 +128,7 @@ export class AuthManager {
       this.isAuthenticated = true;
       localStorage.setItem('holodraw_user', JSON.stringify(this.user));
       this.updateUI();
+      if (this.onAuthChange) this.onAuthChange(this.user, false);
     } catch (err) {
       this.token = null;
       this.user = null;

@@ -36,11 +36,8 @@ class HoloDrawApp {
     this.auth.onAuthChange = (user, isGuest) => {
       this.username = this.auth.getUsername();
       this.userColor = this.auth.getUserColor();
-
-      if (isGuest) {
-        document.getElementById('app').classList.remove('hidden');
-        this.showRoomModal();
-      }
+      document.getElementById('app').classList.remove('hidden');
+      this.showRoomModal();
     };
 
     if (this.auth.isAuthenticated) {
