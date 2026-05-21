@@ -13,8 +13,9 @@ services:
       - key: PORT
         value: 10000
       - key: MONGO_URI
-        sync: false
+        value: mongodb+srv://user:password@cluster.mongodb.net/holodraw?retryWrites=true
+        # ⚠️ Replace with your actual MongoDB Atlas connection string
       - key: JWT_SECRET
-        sync: false
+        generateValue: true
       - key: CLIENT_URL
         value: https://hellenicdev.github.io/holodraw
