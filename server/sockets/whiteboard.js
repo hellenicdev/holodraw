@@ -3,6 +3,13 @@ const BoardHistory = require('../models/BoardHistory');
 
 const rooms = new Map();
 
+const getRoomState = (roomId) => {
+  if (!rooms.has(roomId)) {
+    rooms.set(roomId, { users: new Map(), strokes: [], stickyNotes: [] });
+  }
+  return rooms.get(roomId);
+};
+
 const setupWhiteboardSocket = (io) => {
   io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
@@ -13,12 +20,8 @@ const setupWhiteboardSocket = (io) => {
       socket.data.username = username;
       socket.data.userId = userId;
 
-      if (!rooms.has(roomId)) {
-        rooms.set(roomId, new Map());
-      }
-
-      const roomUsers = rooms.get(roomId);
-      roomUsers.set(socket.id, {
+      const roomState = getRoomState(roomId);
+      roomState.users.set(socket.id, {
         id: socket.id,
         username: username || 'Anonymous',
         userId: userId || socket.id,
@@ -26,11 +29,19 @@ const setupWhiteboardSocket = (io) => {
         lastActive: Date.now()
       });
 
-      const board = await Board.findOne({ roomId });
-      const strokes = board?.strokes || [];
-      const stickyNotes = board?.stickyNotes || [];
+      if (roomState.strokes.length === 0) {
+        const board = await Board.findOne({ roomId });
+        if (board) {
+          roomState.strokes = board.strokes || [];
+          roomState.stickyNotes = board.stickyNotes || [];
+        }
+      }
 
-      socket.emit('board-state', { strokes, stickyNotes, users: Array.from(roomUsers.values()) });
+      socket.emit('board-state', {
+        strokes: roomState.strokes,
+        stickyNotes: roomState.stickyNotes,
+        users: Array.from(roomState.users.values())
+      });
 
       socket.to(roomId).emit('user-joined', {
         id: socket.id,
@@ -38,12 +49,18 @@ const setupWhiteboardSocket = (io) => {
         color: color || '#666'
       });
 
-      io.to(roomId).emit('room-users', Array.from(roomUsers.values()));
+      io.to(roomId).emit('room-users', Array.from(roomState.users.values()));
     });
 
     socket.on('draw', (data) => {
       const { roomId } = socket.data;
       if (roomId) {
+        const roomState = getRoomState(roomId);
+        roomState.strokes.push({
+          ...data,
+          userId: socket.data.userId || socket.id,
+          username: socket.data.username
+        });
         socket.to(roomId).emit('draw', {
           ...data,
           userId: socket.data.userId || socket.id,
@@ -64,24 +81,29 @@ const setupWhiteboardSocket = (io) => {
       }
     });
 
-    socket.on('undo', (data) => {
+    socket.on('undo', () => {
       const { roomId } = socket.data;
       if (roomId) {
-        socket.to(roomId).emit('undo', data);
+        const roomState = getRoomState(roomId);
+        const removed = roomState.strokes.pop();
+        if (removed) socket.to(roomId).emit('undo');
       }
     });
 
-    socket.on('redo', (data) => {
+    socket.on('redo', () => {
       const { roomId } = socket.data;
       if (roomId) {
-        socket.to(roomId).emit('redo', data);
+        socket.to(roomId).emit('redo');
       }
     });
 
     socket.on('clear-board', () => {
       const { roomId } = socket.data;
       if (roomId) {
-        socket.to(roomId).emit('clear-board');
+        const roomState = getRoomState(roomId);
+        roomState.strokes = [];
+        roomState.stickyNotes = [];
+        io.to(roomId).emit('clear-board');
       }
     });
 
@@ -109,6 +131,8 @@ const setupWhiteboardSocket = (io) => {
     socket.on('sticky-note-add', (data) => {
       const { roomId } = socket.data;
       if (roomId) {
+        const roomState = getRoomState(roomId);
+        roomState.stickyNotes.push(data);
         socket.to(roomId).emit('sticky-note-add', data);
       }
     });
@@ -116,6 +140,9 @@ const setupWhiteboardSocket = (io) => {
     socket.on('sticky-note-update', (data) => {
       const { roomId } = socket.data;
       if (roomId) {
+        const roomState = getRoomState(roomId);
+        const idx = roomState.stickyNotes.findIndex(n => n.id === data.id);
+        if (idx !== -1) roomState.stickyNotes[idx] = { ...roomState.stickyNotes[idx], ...data };
         socket.to(roomId).emit('sticky-note-update', data);
       }
     });
@@ -123,6 +150,8 @@ const setupWhiteboardSocket = (io) => {
     socket.on('sticky-note-delete', (data) => {
       const { roomId } = socket.data;
       if (roomId) {
+        const roomState = getRoomState(roomId);
+        roomState.stickyNotes = roomState.stickyNotes.filter(n => n.id !== data.id);
         socket.to(roomId).emit('sticky-note-delete', data);
       }
     });
@@ -155,14 +184,14 @@ const setupWhiteboardSocket = (io) => {
     socket.on('disconnect', () => {
       const { roomId } = socket.data;
       if (roomId) {
-        const roomUsers = rooms.get(roomId);
-        if (roomUsers) {
-          roomUsers.delete(socket.id);
-          if (roomUsers.size === 0) {
+        const roomState = rooms.get(roomId);
+        if (roomState) {
+          roomState.users.delete(socket.id);
+          if (roomState.users.size === 0) {
             rooms.delete(roomId);
           } else {
             io.to(roomId).emit('user-left', socket.id);
-            io.to(roomId).emit('room-users', Array.from(roomUsers.values()));
+            io.to(roomId).emit('room-users', Array.from(roomState.users.values()));
           }
         }
         socket.to(roomId).emit('cursor-remove', socket.id);
