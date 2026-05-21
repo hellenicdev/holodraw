@@ -14,14 +14,27 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || '*',
+    origin: [
+      process.env.CLIENT_URL,
+      'https://hellenicdev.github.io',
+      'http://localhost:5500',
+      'http://localhost:5000'
+    ].filter(Boolean),
     methods: ['GET', 'POST'],
     credentials: true
   },
   maxHttpBufferSize: 5e7
 });
 
-app.use(cors({ origin: process.env.CLIENT_URL || '*', credentials: true }));
+app.use(cors({
+  origin: [
+    process.env.CLIENT_URL,
+    'https://hellenicdev.github.io',
+    'http://localhost:5500',
+    'http://localhost:5000'
+  ].filter(Boolean),
+  credentials: true
+}));
 app.use(express.json({ limit: '10mb' }));
 
 connectDB();

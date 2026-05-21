@@ -13,8 +13,8 @@ services:
       - key: PORT
         value: 10000
       - key: MONGO_URI
-        value: mongodb+srv://hellenicdev:htanenam11kro@holodraw.homozjj.mongodb.net/?appName=HoloDraw
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: CLIENT_URL
-        value: https://hellenicdev.github.io/holodraw
+        value: https://hellenicdev.github.io
