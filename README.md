@@ -1,4 +1,5 @@
 # HoloDraw
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S6S31XB030)
 
 > **Real-Time Collaborative Whiteboard Platform** — A multiplayer whiteboard app that feels like Miro meets Excalidraw, built with vanilla frontend tech and a real-time Node.js backend.
 
