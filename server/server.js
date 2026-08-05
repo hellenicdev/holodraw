@@ -16,7 +16,7 @@ const io = new Server(server, {
   cors: {
     origin: [
       process.env.CLIENT_URL,
-      'https://hellenicdev.github.io',
+      'https://hellenicdev.eu',
       'http://localhost:5500',
       'http://localhost:5000'
     ].filter(Boolean),
@@ -29,7 +29,7 @@ const io = new Server(server, {
 app.use(cors({
   origin: [
     process.env.CLIENT_URL,
-    'https://hellenicdev.github.io',
+    'https://hellenicdev.eu',
     'http://localhost:5500',
     'http://localhost:5000'
   ].filter(Boolean),
