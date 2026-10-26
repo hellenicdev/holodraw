@@ -3,6 +3,8 @@ import { ToolbarManager } from './components/toolbar.js';
 import { SidebarManager } from './components/sidebar.js';
 import { AuthManager } from './components/auth.js';
 import { Minimap } from './components/minimap.js';
+import { safeHexColor } from './utils/color.js';
+import { normalizeRoomId } from './utils/room.js';
 
 const SERVER_URL = window.location.origin.includes('localhost')
   ? 'http://localhost:5000'
@@ -26,35 +28,55 @@ class HoloDrawApp {
     this.lastCursorEmit = 0;
 
     this.autoSaveTimer = null;
+    this.roomModalBound = false;
+    this.knownStickyIds = new Set();
+    this.authRecoveryAttempted = false;
+    this.pendingRoomId = null;
 
     this.init();
   }
 
   async init() {
     this.auth = new AuthManager();
+    const roomParam = new URLSearchParams(window.location.search).get('room');
+    this.pendingRoomId = roomParam ? roomParam.trim().toLowerCase() : null;
 
-    this.auth.onAuthChange = (user, isGuest) => {
-      this.username = this.auth.getUsername();
-      this.userColor = this.auth.getUserColor();
-      document.getElementById('app').classList.remove('hidden');
-      this.showRoomModal();
+    this.auth.onAuthChange = () => {
+      this.enterApp();
     };
 
-    if (this.auth.isAuthenticated) {
-      this.username = this.auth.getUsername();
-      this.userColor = this.auth.getUserColor();
-      document.getElementById('app').classList.remove('hidden');
-      this.showRoomModal();
-    } else {
-      this.auth.show();
-    }
+    const signedIn = await this.auth.restoreSession();
+    if (signedIn) this.enterApp();
+    else this.auth.show();
 
     this.setupGlobalListeners();
+  }
+
+  enterApp() {
+    this.username = this.auth.getUsername();
+    this.userColor = this.auth.getUserColor();
+    document.getElementById('app').classList.remove('hidden');
+    if (this.pendingRoomId && this.auth.user) {
+      const roomId = this.pendingRoomId;
+      this.pendingRoomId = null;
+      this.joinRoom(roomId);
+      return;
+    }
+    this.showRoomModal();
+  }
+
+  ensureSignedIn() {
+    if (this.auth.user) return true;
+    this.showToast('Sign in to create or join a board');
+    this.auth.show();
+    return false;
   }
 
   showRoomModal() {
     const modal = document.getElementById('room-modal');
     modal.classList.remove('hidden');
+    if (this.roomModalBound) return;
+    this.roomModalBound = true;
 
     document.getElementById('create-room-form').addEventListener('submit', (e) => {
       e.preventDefault();
@@ -65,7 +87,7 @@ class HoloDrawApp {
 
     document.getElementById('join-room-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const roomId = document.getElementById('room-id-input').value.trim().toUpperCase();
+      const roomId = document.getElementById('room-id-input').value.trim();
       if (roomId) {
         modal.classList.add('hidden');
         this.joinRoom(roomId);
@@ -74,39 +96,98 @@ class HoloDrawApp {
   }
 
   async createRoom(name) {
-    this.roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
-    this.connectSocket();
-    this.startApp();
+    if (!this.ensureSignedIn()) {
+      this.showRoomModal();
+      return;
+    }
+    try {
+      const res = await this.auth.api('/boards', {
+        method: 'POST',
+        body: JSON.stringify({ name: typeof name === 'string' ? name : 'Untitled Board' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || typeof data.roomId !== 'string') {
+        this.showToast(data.error || 'Could not create board');
+        this.showRoomModal();
+        return;
+      }
+      this.roomId = data.roomId;
+      this.startApp();
+      this.connectSocket();
+    } catch (err) {
+      this.showToast('Could not create board');
+      this.showRoomModal();
+    }
   }
 
   async joinRoom(roomId) {
-    this.roomId = roomId;
-    this.connectSocket();
-    this.startApp();
+    if (!this.ensureSignedIn()) {
+      this.showRoomModal();
+      return;
+    }
+    const id = normalizeRoomId(roomId);
+    if (!id) {
+      this.showToast('Room codes are 32-character ids');
+      this.showRoomModal();
+      return;
+    }
+    try {
+      const res = await this.auth.api(`/boards/${id}/join`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        this.showToast(data.error || 'Could not join board');
+        this.showRoomModal();
+        return;
+      }
+      this.roomId = typeof data.roomId === 'string' ? data.roomId : id;
+      this.startApp();
+      this.connectSocket();
+    } catch (err) {
+      this.showToast('Could not join board');
+      this.showRoomModal();
+    }
   }
 
   connectSocket() {
+    if (this.socket) {
+      this.socket.removeAllListeners();
+      this.socket.disconnect();
+    }
+
     this.socket = io(SERVER_URL, {
+      withCredentials: true,
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
-      reconnectionAttempts: 10
+      reconnectionAttempts: 5
     });
 
     this.socket.on('connect', () => {
-      console.log('Socket connected:', this.socket.id);
-      this.socket.emit('join-room', {
-        roomId: this.roomId,
-        username: this.username,
-        userId: this.auth.getUserId(),
-        color: this.userColor
-      });
+      this.authRecoveryAttempted = false;
+      this.socket.emit('join-room', { roomId: this.roomId });
+    });
+
+    this.socket.on('connect_error', (err) => {
+      const message = err && typeof err.message === 'string' ? err.message : '';
+      if (message.includes('Authentication')) this.recoverSocketAuth();
+    });
+
+    this.socket.on('join-error', (data) => {
+      const message = data && typeof data.error === 'string' ? data.error : 'Unable to join room';
+      this.showToast(message);
+    });
+
+    this.socket.on('action-error', (data) => {
+      const message = data && typeof data.error === 'string' ? data.error : 'Action failed';
+      this.showToast(message);
     });
 
     this.socket.on('board-state', (data) => {
+      if (!this.canvas) return;
       if (data.strokes) this.canvas.setStrokes(data.strokes);
       if (data.stickyNotes) {
         this.canvas.setStickyNotes(data.stickyNotes);
+        this.knownStickyIds = new Set(data.stickyNotes.map((note) => note && note.id).filter(Boolean));
         this.renderStickyNotes();
       }
       if (data.users) {
@@ -183,8 +264,23 @@ class HoloDrawApp {
     });
   }
 
+  async recoverSocketAuth() {
+    if (this.authRecoveryAttempted) return;
+    this.authRecoveryAttempted = true;
+    const ok = await this.auth.refreshSession();
+    if (ok && this.socket && !this.socket.connected) {
+      this.authRecoveryAttempted = false;
+      this.socket.connect();
+      return;
+    }
+    this.showToast('Session expired. Sign in again.');
+    if (this.socket) this.socket.disconnect();
+  }
+
   startApp() {
     document.getElementById('room-id-display').textContent = this.roomId;
+    if (this.appStarted) return;
+    this.appStarted = true;
 
     this.canvas = new CanvasEngine('canvas-container');
     this.toolbar = new ToolbarManager(this.canvas);
@@ -192,14 +288,16 @@ class HoloDrawApp {
     this.minimap = new Minimap(this.canvas);
 
     this.canvas.onChange = (stroke, action) => {
-      if (action === 'draw' && stroke) {
-        this.socket.emit('draw', stroke);
-      } else if (action === 'undo' && stroke) {
-        this.socket.emit('undo', { strokeId: stroke.timestamp });
-      } else if (action === 'redo' && stroke) {
-        this.socket.emit('redo', { strokeId: stroke.timestamp });
-      } else if (action === 'clear') {
-        this.socket.emit('clear-board');
+      if (this.socket && this.socket.connected) {
+        if (action === 'draw' && stroke) {
+          this.socket.emit('draw', stroke);
+        } else if (action === 'undo' && stroke) {
+          this.socket.emit('undo', { strokeId: stroke.timestamp });
+        } else if (action === 'redo' && stroke) {
+          this.socket.emit('redo', { strokeId: stroke.timestamp });
+        } else if (action === 'clear') {
+          this.socket.emit('clear-board');
+        }
       }
       if (this.minimap) this.minimap.update();
       this.toolbar.updateUndoRedo();
@@ -207,6 +305,7 @@ class HoloDrawApp {
     };
 
     this.canvas.onStickyNotesChange = (notes) => {
+      this.emitNewStickyNotes(notes);
       this.renderStickyNotes();
       if (this.minimap) this.minimap.update();
       this.scheduleAutoSave();
@@ -239,27 +338,45 @@ class HoloDrawApp {
   }
 
   updateRemoteCursor(data) {
+    if (!data || typeof data !== 'object') return;
+    const x = Number(data.x);
+    const y = Number(data.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+    const color = safeHexColor(data.color, '#666666');
+    const username = typeof data.username === 'string' ? data.username.slice(0, 30) : '';
     let el = this.cursorElements.get(data.id);
 
     if (!el) {
       el = document.createElement('div');
       el.className = 'remote-cursor';
-      el.innerHTML = `
-        <svg width="16" height="20" viewBox="0 0 16 20" fill="none">
-          <path d="M2 1L14 12H8.5L7 18L5 12H2L2 1Z" fill="${data.color || '#666'}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>
-        </svg>
-        <span class="remote-label">${data.username || ''}</span>
-      `;
+
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('width', '16');
+      svg.setAttribute('height', '20');
+      svg.setAttribute('viewBox', '0 0 16 20');
+      svg.setAttribute('fill', 'none');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M2 1L14 12H8.5L7 18L5 12H2L2 1Z');
+      path.setAttribute('stroke', 'rgba(0,0,0,0.3)');
+      path.setAttribute('stroke-width', '0.5');
+      svg.appendChild(path);
+
+      const label = document.createElement('span');
+      label.className = 'remote-label';
+      el.append(svg, label);
       document.getElementById('cursors-layer').appendChild(el);
       this.cursorElements.set(data.id, el);
     }
 
-    el.style.transform = `translate(${data.x}px, ${data.y}px)`;
-
+    const path = el.querySelector('path');
+    if (path) path.setAttribute('fill', color);
     const label = el.querySelector('.remote-label');
     if (label) {
-      label.style.background = data.color || '#666';
+      label.textContent = username;
+      label.style.background = color;
     }
+    el.style.transform = `translate(${x}px, ${y}px)`;
   }
 
   removeCursor(userId) {
@@ -270,31 +387,53 @@ class HoloDrawApp {
     }
   }
 
+  emitNewStickyNotes(notes) {
+    if (!this.knownStickyIds) this.knownStickyIds = new Set();
+    for (const note of notes || []) {
+      if (!note || typeof note.id !== 'string' || this.knownStickyIds.has(note.id)) continue;
+      this.knownStickyIds.add(note.id);
+      if (this.socket && this.socket.connected) this.socket.emit('sticky-note-add', note);
+    }
+  }
+
   renderStickyNotes() {
     const container = document.getElementById('sticky-notes-container');
-    container.innerHTML = '';
+    container.replaceChildren();
 
     for (const note of this.canvas.stickyNotes) {
+      if (!note || typeof note.id !== 'string') continue;
+      const x = Number(note.x);
+      const y = Number(note.y);
+      const width = Number(note.width);
+      const height = Number(note.height);
       const el = document.createElement('div');
       el.className = 'sticky-note' + (this.canvas.selectedStickyNote === note.id ? ' selected' : '');
-      el.style.left = note.x + 'px';
-      el.style.top = note.y + 'px';
-      el.style.width = note.width + 'px';
-      el.style.height = note.height + 'px';
-      el.style.background = note.color || '#fff9c4';
-      el.style.zIndex = note.zIndex || 0;
+      el.style.left = `${Number.isFinite(x) ? x : 0}px`;
+      el.style.top = `${Number.isFinite(y) ? y : 0}px`;
+      el.style.width = `${Number.isFinite(width) ? width : 160}px`;
+      el.style.height = `${Number.isFinite(height) ? height : 160}px`;
+      el.style.background = safeHexColor(note.color, '#fff9c4');
+      if (Number.isFinite(Number(note.zIndex))) el.style.zIndex = String(Math.trunc(Number(note.zIndex)));
       el.dataset.noteId = note.id;
 
-      el.innerHTML = `
-        <div class="sticky-note-header">
-          <button class="sticky-note-delete" data-note-id="${note.id}">&times;</button>
-        </div>
-        <div class="sticky-note-body">
-          <textarea placeholder="Type here..." data-note-id="${note.id}">${note.text || ''}</textarea>
-        </div>
-      `;
+      const header = document.createElement('div');
+      header.className = 'sticky-note-header';
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'sticky-note-delete';
+      deleteBtn.dataset.noteId = note.id;
+      deleteBtn.type = 'button';
+      deleteBtn.textContent = '\u00d7';
+      header.appendChild(deleteBtn);
 
-      const header = el.querySelector('.sticky-note-header');
+      const body = document.createElement('div');
+      body.className = 'sticky-note-body';
+      const textarea = document.createElement('textarea');
+      textarea.placeholder = 'Type here...';
+      textarea.dataset.noteId = note.id;
+      textarea.value = typeof note.text === 'string' ? note.text : '';
+      body.appendChild(textarea);
+      el.append(header, body);
+
       let isDragging = false;
       let dragStartX, dragStartY, noteStartX, noteStartY;
 
@@ -323,12 +462,13 @@ class HoloDrawApp {
         if (isDragging) {
           isDragging = false;
           el.style.cursor = 'move';
-          this.socket.emit('sticky-note-update', { id: note.id, x: note.x, y: note.y });
+          if (this.socket && this.socket.connected) {
+            this.socket.emit('sticky-note-update', { id: note.id, x: note.x, y: note.y });
+          }
           this.scheduleAutoSave();
         }
       });
 
-      const textarea = el.querySelector('textarea');
       textarea.addEventListener('focus', () => {
         this.canvas.selectedStickyNote = note.id;
         container.querySelectorAll('.sticky-note').forEach(n => n.classList.remove('selected'));
@@ -337,16 +477,20 @@ class HoloDrawApp {
 
       textarea.addEventListener('input', () => {
         note.text = textarea.value;
-        this.socket.emit('sticky-note-update', { id: note.id, text: note.text });
+        if (this.socket && this.socket.connected) {
+          this.socket.emit('sticky-note-update', { id: note.id, text: note.text });
+        }
         this.scheduleAutoSave();
       });
 
-      const deleteBtn = el.querySelector('.sticky-note-delete');
       deleteBtn.addEventListener('click', () => {
         this.canvas.stickyNotes = this.canvas.stickyNotes.filter(n => n.id !== note.id);
         if (this.canvas.selectedStickyNote === note.id) this.canvas.selectedStickyNote = null;
         el.remove();
-        this.socket.emit('sticky-note-delete', { id: note.id });
+        this.knownStickyIds.delete(note.id);
+        if (this.socket && this.socket.connected) {
+          this.socket.emit('sticky-note-delete', { id: note.id });
+        }
         this.scheduleAutoSave();
       });
 
@@ -419,11 +563,9 @@ class HoloDrawApp {
   scheduleAutoSave() {
     if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer);
     this.autoSaveTimer = setTimeout(() => {
-      this.socket.emit('save-board', {
-        strokes: this.canvas.strokes,
-        stickyNotes: this.canvas.stickyNotes,
-        action: 'auto_save'
-      });
+      if (this.socket && this.socket.connected) {
+        this.socket.emit('save-board', { action: 'auto_save' });
+      }
     }, 3000);
   }
 

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="description" content="HoloDraw — Real-time collaborative whiteboard. Draw, sketch, and brainstorm with your team in real-time.">
+  <link rel="canonical" href="https://hellenicdev.eu/holodraw/client/">
   <meta name="theme-color" content="#0a0a1a">
   <meta name="color-scheme" content="dark">
 
@@ -78,7 +79,7 @@
         <form id="join-room-form">
           <div class="form-group">
             <label for="room-id-input">Room Code</label>
-            <input type="text" id="room-id-input" placeholder="e.g. ABC123" maxlength="10" style="text-transform: uppercase; letter-spacing: 2px;">
+            <input type="text" id="room-id-input" placeholder="32-character room id" maxlength="32" autocapitalize="off" spellcheck="false" style="letter-spacing: 0.5px;">
           </div>
           <button type="submit" class="btn btn-secondary">Join Board</button>
         </form>
@@ -268,7 +269,7 @@
   <!-- Toast container -->
   <div id="toast-container"></div>
 
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.socket.io/4.8.4/socket.io.min.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

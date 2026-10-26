@@ -1,42 +1,51 @@
-const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { verifyAccessToken } = require('../utils/tokens');
+
+const readAccessToken = (req) => {
+  if (req.cookies && typeof req.cookies.accessToken === 'string') {
+    return req.cookies.accessToken;
+  }
+  const header = req.headers.authorization;
+  if (typeof header === 'string' && header.startsWith('Bearer ')) {
+    const token = header.slice(7).trim();
+    return token || null;
+  }
+  return null;
+};
+
+const loadUser = async (token) => {
+  const decoded = verifyAccessToken(token);
+  if (!decoded) return null;
+  return User.findById(decoded.id);
+};
 
 const protect = async (req, res, next) => {
-  let token;
-
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
-  }
-
+  const token = readAccessToken(req);
   if (!token) {
     return res.status(401).json({ error: 'Not authorized, no token provided' });
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id);
+    req.user = await loadUser(token);
     if (!req.user) {
-      return res.status(401).json({ error: 'User not found' });
+      return res.status(401).json({ error: 'Not authorized, token invalid' });
     }
-    next();
+    return next();
   } catch (error) {
     return res.status(401).json({ error: 'Not authorized, token invalid' });
   }
 };
 
 const optionalAuth = async (req, res, next) => {
-  let token;
-
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
+  const token = readAccessToken(req);
+  if (token) {
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(decoded.id);
-    } catch (e) {
-      // token invalid, continue without auth
+      req.user = await loadUser(token);
+    } catch (error) {
+      req.user = null;
     }
   }
-  next();
+  return next();
 };
 
-module.exports = { protect, optionalAuth };
+module.exports = { protect, optionalAuth, readAccessToken };

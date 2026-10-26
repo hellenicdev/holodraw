@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 
+mongoose.set('sanitizeFilter', true);
+
 const connectDB = async () => {
   const uri = process.env.MONGO_URI;
   if (!uri) {
