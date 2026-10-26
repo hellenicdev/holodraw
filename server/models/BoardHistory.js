@@ -10,7 +10,7 @@ const boardHistorySchema = new mongoose.Schema({
   action: {
     type: String,
     enum: ['stroke_added', 'stroke_removed', 'cleared', 'sticky_note_added',
-           'sticky_note_updated', 'sticky_note_removed', 'board_loaded'],
+           'sticky_note_updated', 'sticky_note_removed', 'board_loaded', 'board_saved'],
     required: true
   },
   data: {

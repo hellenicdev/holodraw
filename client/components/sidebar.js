@@ -1,3 +1,5 @@
+import { safeHexColor } from '../utils/color.js';
+
 export class SidebarManager {
   constructor(canvas) {
     this.canvas = canvas;
@@ -39,15 +41,28 @@ export class SidebarManager {
     this.users = users || [];
     this.userCount.textContent = this.users.length;
 
-    this.userList.innerHTML = '';
+    this.userList.replaceChildren();
     for (const user of this.users) {
       const li = document.createElement('li');
       li.className = 'user-list-item';
-      li.innerHTML = `
-        <span class="user-dot" style="background: ${user.color || '#666'}"></span>
-        <span class="user-list-name">${user.username || 'Anonymous'}</span>
-        ${user.isMe ? '<span class="user-list-me">You</span>' : ''}
-      `;
+
+      const dot = document.createElement('span');
+      dot.className = 'user-dot';
+      dot.style.background = safeHexColor(user && user.color, '#666666');
+
+      const name = document.createElement('span');
+      name.className = 'user-list-name';
+      name.textContent = user && typeof user.username === 'string' && user.username
+        ? user.username.slice(0, 30)
+        : 'Anonymous';
+
+      li.append(dot, name);
+      if (user && user.isMe) {
+        const me = document.createElement('span');
+        me.className = 'user-list-me';
+        me.textContent = 'You';
+        li.appendChild(me);
+      }
       this.userList.appendChild(li);
     }
   }
@@ -64,20 +79,26 @@ export class SidebarManager {
   }
 
   renderLayers() {
-    this.layersList.innerHTML = '';
+    this.layersList.replaceChildren();
+    const eyeOpen = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    const eyeClosed = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
     for (const layer of this.canvas.layers) {
       const li = document.createElement('li');
       li.className = 'layer-item' + (layer.id === this.canvas.activeLayer ? ' active' : '');
-      li.innerHTML = `
-        <button class="layer-visibility" data-layer-id="${layer.id}">
-          ${layer.visible
-            ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
-            : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
-          }
-        </button>
-        <span class="layer-name">${layer.name}</span>
-        ${layer.locked ? '<span style="color:var(--text-muted)">🔒</span>' : ''}
-      `;
+      const visibility = document.createElement('button');
+      visibility.className = 'layer-visibility';
+      visibility.dataset.layerId = String(layer.id);
+      visibility.innerHTML = layer.visible ? eyeOpen : eyeClosed;
+      const name = document.createElement('span');
+      name.className = 'layer-name';
+      name.textContent = typeof layer.name === 'string' ? layer.name : 'Layer';
+      li.append(visibility, name);
+      if (layer.locked) {
+        const lock = document.createElement('span');
+        lock.style.color = 'var(--text-muted)';
+        lock.textContent = '🔒';
+        li.appendChild(lock);
+      }
       li.addEventListener('click', (e) => {
         if (e.target.closest('.layer-visibility')) {
           layer.visible = !layer.visible;
@@ -125,21 +146,29 @@ export class SidebarManager {
       return;
     }
 
-    let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}" width="${bounds.width}" height="${bounds.height}">`;
+    const svgNumber = (value) => {
+      const number = Number(value);
+      return Number.isFinite(number) ? number : 0;
+    };
+    const svgColor = (color) => color === 'rgba(0,0,0,0)' ? 'none' : safeHexColor(color, '#000000');
+
+    let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${svgNumber(bounds.minX)} ${svgNumber(bounds.minY)} ${svgNumber(bounds.width)} ${svgNumber(bounds.height)}" width="${svgNumber(bounds.width)}" height="${svgNumber(bounds.height)}">`;
 
     for (const stroke of this.canvas.strokes) {
+      const strokeWidth = svgNumber(stroke.strokeWidth);
+      const color = svgColor(stroke.color);
       if (stroke.type === 'pencil') {
         if (!stroke.points || stroke.points.length < 2) continue;
-        const d = stroke.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-        svgContent += `<path d="${d}" stroke="${stroke.color}" stroke-width="${stroke.strokeWidth}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+        const d = stroke.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${svgNumber(p.x)} ${svgNumber(p.y)}`).join(' ');
+        svgContent += `<path d="${d}" stroke="${color}" stroke-width="${strokeWidth}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
       } else if (stroke.type === 'rectangle') {
-        svgContent += `<rect x="${stroke.x}" y="${stroke.y}" width="${stroke.width}" height="${stroke.height}" stroke="${stroke.color}" stroke-width="${stroke.strokeWidth}" fill="none"/>`;
+        svgContent += `<rect x="${svgNumber(stroke.x)}" y="${svgNumber(stroke.y)}" width="${svgNumber(stroke.width)}" height="${svgNumber(stroke.height)}" stroke="${color}" stroke-width="${strokeWidth}" fill="none"/>`;
       } else if (stroke.type === 'circle') {
-        const cx = stroke.x + stroke.width / 2;
-        const cy = stroke.y + stroke.height / 2;
-        const rx = Math.abs(stroke.width) / 2;
-        const ry = Math.abs(stroke.height) / 2;
-        svgContent += `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" stroke="${stroke.color}" stroke-width="${stroke.strokeWidth}" fill="none"/>`;
+        const cx = svgNumber(stroke.x) + svgNumber(stroke.width) / 2;
+        const cy = svgNumber(stroke.y) + svgNumber(stroke.height) / 2;
+        const rx = Math.abs(svgNumber(stroke.width)) / 2;
+        const ry = Math.abs(svgNumber(stroke.height)) / 2;
+        svgContent += `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" stroke="${color}" stroke-width="${strokeWidth}" fill="none"/>`;
       }
     }
 

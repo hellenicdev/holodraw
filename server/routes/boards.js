@@ -1,12 +1,20 @@
 const express = require('express');
 const router = express.Router();
-const { createBoard, getBoard, saveBoard, listBoards, getBoardHistory } = require('../controllers/boardController');
-const { protect, optionalAuth } = require('../middleware/auth');
+const {
+  createBoard,
+  joinBoard,
+  getBoard,
+  saveBoard,
+  listBoards,
+  getBoardHistory
+} = require('../controllers/boardController');
+const { protect } = require('../middleware/auth');
 
-router.post('/', optionalAuth, createBoard);
+router.post('/', protect, createBoard);
 router.get('/', protect, listBoards);
-router.get('/:roomId', optionalAuth, getBoard);
-router.put('/:roomId', optionalAuth, saveBoard);
-router.get('/:roomId/history', optionalAuth, getBoardHistory);
+router.post('/:roomId/join', protect, joinBoard);
+router.get('/:roomId', protect, getBoard);
+router.put('/:roomId', protect, saveBoard);
+router.get('/:roomId/history', protect, getBoardHistory);
 
 module.exports = router;
