@@ -1,12 +1,20 @@
+import { safeHexColor } from '../utils/color.js';
+
 const API_URL = window.location.origin.includes('localhost')
   ? 'http://localhost:5000/api'
   : 'https://holodraw.onrender.com/api';
 
 export class AuthManager {
   constructor() {
-    this.token = localStorage.getItem('holodraw_token');
-    this.user = JSON.parse(localStorage.getItem('holodraw_user') || 'null');
-    this.isGuest = !this.token;
+    localStorage.removeItem('holodraw_token');
+    localStorage.removeItem('holodraw_user');
+
+    this.user = null;
+    this.isGuest = true;
+    this.isAuthenticated = false;
+    this.isLogin = true;
+    this.onAuthChange = null;
+    this.refreshTimer = null;
 
     this.authModal = document.getElementById('auth-modal');
     this.authForm = document.getElementById('auth-form');
@@ -25,10 +33,6 @@ export class AuthManager {
     this.userDropdown = document.getElementById('user-dropdown');
     this.userMenuBtn = document.getElementById('user-menu-btn');
     this.logoutBtn = document.getElementById('logout-btn');
-
-    this.isLogin = true;
-    this.isAuthenticated = false;
-    this.onAuthChange = null;
 
     this.setupEvents();
   }
@@ -52,7 +56,9 @@ export class AuthManager {
     this.guestBtn.addEventListener('click', () => {
       this.isGuest = true;
       this.isAuthenticated = true;
+      this.user = null;
       this.authModal.classList.add('hidden');
+      this.updateUI();
       if (this.onAuthChange) this.onAuthChange(null, true);
     });
 
@@ -68,9 +74,76 @@ export class AuthManager {
     this.logoutBtn.addEventListener('click', () => {
       this.logout();
     });
+  }
 
-    if (this.token) {
-      this.validateToken();
+  api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (options.body && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+    return fetch(API_URL + path, {
+      ...options,
+      headers,
+      credentials: 'include'
+    });
+  }
+
+  setSession(user) {
+    this.user = user || null;
+    this.isGuest = !this.user;
+    this.isAuthenticated = !!this.user;
+    this.updateUI();
+    this.startRefreshTimer();
+  }
+
+  clearSession() {
+    this.user = null;
+    this.isGuest = true;
+    this.isAuthenticated = false;
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    localStorage.removeItem('holodraw_token');
+    localStorage.removeItem('holodraw_user');
+    this.updateUI();
+  }
+
+  startRefreshTimer() {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.refreshTimer = setInterval(() => {
+      this.refreshSession();
+    }, 10 * 60 * 1000);
+  }
+
+  async refreshSession() {
+    try {
+      const res = await this.api('/auth/refresh', { method: 'POST' });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (data.user) this.user = data.user;
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  async restoreSession() {
+    try {
+      let res = await this.api('/auth/me');
+      if (res.status === 401 && await this.refreshSession()) {
+        res = await this.api('/auth/me');
+      }
+      if (!res.ok) {
+        this.clearSession();
+        return false;
+      }
+      const data = await res.json();
+      this.setSession(data.user);
+      return true;
+    } catch (err) {
+      this.clearSession();
+      return false;
     }
   }
 
@@ -85,9 +158,8 @@ export class AuthManager {
     const body = this.isLogin ? { email, password } : { email, password, username };
 
     try {
-      const res = await fetch(API_URL + endpoint, {
+      const res = await this.api(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
 
@@ -99,42 +171,12 @@ export class AuthManager {
         return;
       }
 
-      this.token = data.token;
-      this.user = data.user;
-      this.isGuest = false;
-      this.isAuthenticated = true;
-
-      localStorage.setItem('holodraw_token', this.token);
-      localStorage.setItem('holodraw_user', JSON.stringify(this.user));
-
-      this.updateUI();
+      this.setSession(data.user);
       this.authModal.classList.add('hidden');
       if (this.onAuthChange) this.onAuthChange(this.user, false);
     } catch (err) {
-      this.authError.textContent = 'Connection error. Using guest mode.';
+      this.authError.textContent = 'Connection error. Please try again.';
       this.authError.classList.remove('hidden');
-    }
-  }
-
-  async validateToken() {
-    try {
-      const res = await fetch(API_URL + '/auth/me', {
-        headers: { 'Authorization': `Bearer ${this.token}` }
-      });
-      if (!res.ok) throw new Error('Invalid token');
-      const data = await res.json();
-      this.user = data.user;
-      this.isGuest = false;
-      this.isAuthenticated = true;
-      localStorage.setItem('holodraw_user', JSON.stringify(this.user));
-      this.updateUI();
-      if (this.onAuthChange) this.onAuthChange(this.user, false);
-    } catch (err) {
-      this.token = null;
-      this.user = null;
-      this.isGuest = true;
-      localStorage.removeItem('holodraw_token');
-      localStorage.removeItem('holodraw_user');
     }
   }
 
@@ -144,17 +186,8 @@ export class AuthManager {
     this.dropdownUsername.textContent = name;
   }
 
-  getAuthHeaders() {
-    if (this.token) {
-      return { 'Authorization': `Bearer ${this.token}` };
-    }
-    return {};
-  }
-
   getUserColor() {
-    if (this.user?.color) return this.user.color;
-    const hue = Math.floor(Math.random() * 360);
-    return `hsl(${hue}, 70%, 60%)`;
+    return safeHexColor(this.user?.color, '#666666');
   }
 
   getUsername() {
@@ -162,22 +195,21 @@ export class AuthManager {
   }
 
   getUserId() {
-    return this.user?._id || 'guest_' + Math.random().toString(36).substring(2, 8);
+    return this.user?._id || null;
   }
 
-  logout() {
-    this.token = null;
-    this.user = null;
-    this.isGuest = true;
-    this.isAuthenticated = false;
-    localStorage.removeItem('holodraw_token');
-    localStorage.removeItem('holodraw_user');
-    this.updateUI();
+  async logout() {
+    try {
+      await this.api('/auth/logout', { method: 'POST' });
+    } catch (err) {
+      // The local session is cleared either way.
+    }
+    this.clearSession();
     window.location.reload();
   }
 
   show() {
-    if (!this.isAuthenticated) {
+    if (!this.user) {
       this.authModal.classList.remove('hidden');
     }
   }

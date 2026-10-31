@@ -168,7 +168,8 @@ html, body {
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-weight: 700;
   color: var(--accent);
-  letter-spacing: 1px;
+  letter-spacing: 0;
+  word-break: break-all;
 }
 
 .icon-btn {
@@ -660,12 +661,13 @@ html, body {
 }
 #share-room-id {
   font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 1.5rem;
+  font-size: 0.95rem;
   font-weight: 700;
-  letter-spacing: 4px;
+  letter-spacing: 0.5px;
   color: var(--accent);
   flex: 1;
   text-align: center;
+  word-break: break-all;
 }
 
 .share-link-desc { font-size: 0.8rem; color: var(--text-secondary); }

@@ -1,46 +1,39 @@
 require('dotenv').config();
+const connectDB = require('./config/db');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const connectDB = require('./config/db');
-const setupWhiteboardSocket = require('./sockets/whiteboard');
+const cookieParser = require('cookie-parser');
+const { parseAllowedOrigins } = require('./utils/validate');
 
 const authRoutes = require('./routes/auth');
 const boardRoutes = require('./routes/boards');
+const setupWhiteboardSocket = require('./sockets/whiteboard');
 
 const app = express();
 const server = http.createServer(app);
+const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
 
 const io = new Server(server, {
   cors: {
-    origin: [
-      process.env.CLIENT_URL,
-      'https://hellenicdev.eu',
-      'http://localhost:5500',
-      'http://localhost:5000'
-    ].filter(Boolean),
+    origin: allowedOrigins,
     methods: ['GET', 'POST'],
     credentials: true
   },
-  maxHttpBufferSize: 5e7
+  maxHttpBufferSize: 1e6
 });
 
+app.set('trust proxy', 1);
 app.use(cors({
-  origin: [
-    process.env.CLIENT_URL,
-    'https://hellenicdev.eu',
-    'http://localhost:5500',
-    'http://localhost:5000'
-  ].filter(Boolean),
-  credentials: true
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
-app.use(express.json({ limit: '10mb' }));
-
-connectDB();
+app.use(cookieParser());
+app.use(express.json({ limit: '1mb' }));
 
 app.use(express.static('../client'));
-
 app.use('/api/auth', authRoutes);
 app.use('/api/boards', boardRoutes);
 
@@ -51,6 +44,11 @@ app.get('/api/health', (req, res) => {
 setupWhiteboardSocket(io);
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+if (require.main === module) {
+  connectDB();
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+module.exports = { app, server, io };

@@ -102,17 +102,22 @@ The server runs on `http://localhost:5000` and serves the client at the root URL
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `5000` | Server port |
+| `PORT` | `5000` | Server port. The process listens on `0.0.0.0` |
+| `NODE_ENV` | | Set to `production` so auth cookies are `Secure`, `SameSite=None`, and `Partitioned` |
 | `MONGO_URI` | `mongodb://localhost:27017/holodraw` | MongoDB connection string |
-| `JWT_SECRET` | *(required)* | Secret key for JWT signing |
-| `CLIENT_URL` | `http://localhost:5500` | Allowed CORS origin |
+| `JWT_SECRET` | *(required)* | Secret key for signing 15-minute access tokens |
+| `ALLOWED_ORIGINS` | `https://hellenicdev.eu` | Comma-separated browser origins allowed by CORS. Add `http://localhost:5000` for local development |
+
+Access tokens are httpOnly cookies that expire after 15 minutes. Refresh tokens are separate httpOnly cookies, stored hashed in the database, and expire after 7 days. `POST /api/auth/refresh` rotates them and `POST /api/auth/logout` revokes the current one. Browsers must call the API with credentials included.
+
+Room ids are 128-bit hex strings. A signed-in user who knows a room id can join it and is added as a collaborator. Saving a board requires the user to be the creator or a collaborator. Existing short room codes no longer work.
 
 ## Usage
 
 1. Open the app — you'll see the auth screen
-2. Sign up, log in, or continue as a guest
-3. Create a new board or join an existing one with a room code
-4. Share the room code with collaborators
+2. Sign up or log in. Guest mode can open the UI, but creating or joining a board requires an account
+3. Create a new board or join one with its 32-character room id
+4. Share the room id with collaborators. Anyone signed in who has the id is added as a collaborator
 5. Start drawing in real-time together!
 
 ### Keyboard Shortcuts
@@ -141,7 +146,7 @@ The server runs on `http://localhost:5000` and serves the client at the root URL
    - **Root Directory**: `server`
    - **Build Command**: `npm install`
    - **Start Command**: `npm start`
-5. Add environment variables (MONGO_URI, JWT_SECRET, etc.)
+5. Add environment variables (`MONGO_URI`, `JWT_SECRET`, `ALLOWED_ORIGINS`, `NODE_ENV=production`)
 6. Deploy!
 
 ### Frontend (GitHub Pages)
